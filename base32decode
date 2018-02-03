@@ -1,0 +1,165 @@
+#!/bin/bash
+# base32d.sh v1.1 September 21, 2014
+# Copyright (c) 2014 Kenji Yoshino https://www.tidgubi.com
+# This script is released under the Version 3 of the GNU General Public
+# License https://www.gnu.org/licenses/gpl-3.0.txt
+#
+# This script implements 100% BASH base32 decoding as specified in section 6 of
+# https://tools.ietf.org/html/rfc4648
+
+function base32dErrorMsg {
+   printf 'Invalid character encountered.\n'
+}
+
+# decodeChar $ch
+# converts Encoded char to Value according to Table 3 of RFC4648 and treat
+# lowercase as valid characters.
+function decodeChar {
+   local ch="${1:0:1}"
+   # if this is an = or empty, return 0, but exit 2 to flag that this is the
+   # end of the input
+   if [[ "$ch" = '=' || "${#ch}" -eq 0 ]]; then
+      printf '0'
+      exit 2
+   fi
+   # convert the char to its ASCII Value
+   local val=$(printf '%d' "'$ch")
+   
+   # shift lowercase to upper case
+   if [[ $val -gt 96 ]]; then
+      (( val -= 32 ))
+   fi
+   # shift the ASCII value to convert it to the 0-31 value
+   if [[ $val -gt 55 ]]; then
+      (( val -= 65))
+   else
+      (( val -= 24))
+   fi
+   
+   # Verify that the decoded value is valid
+   if [[ $val -gt 31 || $val -lt 0 ]]; then
+      base32dErrorMsg
+      exit 1
+   fi
+   printf "$val"
+}
+
+function base32dUsage {
+   printf 'Usage: base32d.sh [
+ | -f ] [-h]\n'
+   printf '\n'
+   exit 1
+}
+
+function base32dexit {
+   if [[ "$1" -eq 2 ]]; then
+      printf '\n'
+      exit 0
+   elif [[ "$1" -eq 1 ]]; then
+      base32dErrorMsg
+      exit 1
+   fi
+}
+
+function base32d {
+   # verify that any command line parameters are valid.
+   local input
+   local prefix='\x'
+   if [[ "$#" -gt 0 ]]; then
+      if [[ "$1" = '-f' ]]; then
+         if [[ "$2" = '-' ]]; then
+            input=$(cat)
+         elif [[ -r "$2" ]]; then
+            input=$(cat "$2")
+         else
+            printf 'Cannot access the specified file.\n'
+            exit 1
+         fi
+         if [[ "$3" = '-h' ]]; then
+            prefix=''
+         fi
+      elif [[ "$1" = '-h' ]]; then
+         input=$(cat)
+         prefix=''
+      else
+         input="$1"
+         if [[ "$2" = '-h' ]]; then
+            prefix=''
+         fi
+      fi
+   else
+      input=$(cat)
+   fi
+   
+   local ndx=0
+   local len=${#input}
+   local buffer
+   local term=0
+   local val
+
+   while [ $ndx -lt $len ]; do
+      # parse the next quantum (40 bits) of characters out of the input
+      buffer=$(decodeChar "${input:$ndx:1}") || base32dexit $? #1
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}"); term=$? #2
+      (( buffer |= val ))
+      # print the first 5 + 3 bits
+      printf "$prefix$(printf '%02x' $(( buffer >> 2 )) )" # 1st byte
+      base32dexit $term
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}") || base32dexit $? #3
+      (( buffer |= val ))
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}"); term=$? #4
+      (( buffer |= val ))
+      (( buffer &= 0xFFF ))
+      # print 2 + 5 + 1 bits
+      printf "$prefix$(printf '%02x' $(( buffer >> 4 )) )" # 2nd byte
+      base32dexit $term
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}") || base32dexit $? #5
+      (( buffer |= val ))
+      (( buffer &= 0x1FF ))
+      printf "$prefix$(printf '%02x' $(( buffer >> 1 )) )" #3rd byte
+      base32dexit $term
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}") || base32dexit $? #6
+      (( buffer |= val ))
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}"); term=$? #7
+      (( buffer |= val ))
+      (( buffer &= 0x7FF ))
+      printf "$prefix$(printf '%02x' $(( buffer >> 3 )) )" # 4th byte
+      base32dexit $term
+      (( buffer <<= 5 ))
+      (( ndx++ ))
+      val=$(decodeChar "${input:$ndx:1}") || base32dexit $? #8
+      (( buffer |= val ))
+      printf "$prefix$(printf '%02x' $(( buffer & 0xFF )) )" # 5th byte
+      (( ndx++ ))
+   done
+   
+   printf '\n'
+   exit 0
+}
+
+case $# in
+   0)
+      base32d
+      ;;
+   1)
+      base32d "$1"
+      ;;
+   2)
+      base32d "$1" "$2"
+      ;;
+   *)
+      base32d "$1" "$2" "$3"
+      ;;
+esac
